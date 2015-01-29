@@ -762,3 +762,167 @@ __inmem_row_leaf(WT_SESSION_IMPL *session, WT_PAGE *page)
 	 */
 	return (0);
 }
+
+#if 0
+/*
+ * __page_size_verify_row_int --
+ * Validate that the stored memory footprint matches the page contents.
+ */
+int __page_size_verify_row_int(WT_SESSION *session, WT_PAGE *page)
+{
+	WT_PAGE_INDEX *pindex;
+	uint64_t mod_size, size;
+
+	size = mod_size = 0;
+
+	/*
+	 * An internal page has:
+	 * - WT_PAGE structure
+	 * - u.intl.__index - index array of WT_REFs 
+	 * - disk image
+	 * - A page modify structure.
+	 */
+
+	size = sizeof(WT_PAGE);
+
+	pindex = WT_INTL_INDEX_COPY(page);
+	size += sizeof(WT_PAGE_INDEX) + pindex->entries * sizeof(WT_REF *);
+
+	/*
+	 * Sometimes we don't allocate refs with a page, but they should
+	 * always form part of the memory footprint.
+	 */
+	size += (pindex->entries * sizeof(WT_REF));
+
+	if (page->dsk != NULL && F_ISSET(page, WT_PAGE_DISK_ALLOC))
+		size += page->dsk->mem_size;
+
+	WT_RET(__page_modify_size(session, page, &mod_size));
+	size += mod_size;
+
+	WT_ASSERT(session, size == page->memory_footprint);
+
+	return (0);
+}
+
+/*
+ * __page_size_row_entry --
+ * Return a size for a single entry. If it's not instantiated or not on the
+ * page returns 0.
+ */
+int __page_size_row_entry(
+    WT_SESSION *session, WT_PAGE *page, WT_ROW *rip, uint64_t *sizep)
+{
+	WT_DECL_ITEM(key);
+
+	WT_RET(__wt_row_leaf_key(session, page, rip, key, 0));
+	if (!__wt_off_page(page, key->data)) {
+		*sizep += key->size;
+	}
+	return (0);
+}
+
+/*
+ * __page_size_insert --
+ * Return a size for a single insert.
+ */
+int __page_size_insert(
+    WT_SESSION *session, WT_INSERT *insert, uint64_t *sizep)
+{
+
+	WT_RET(__wt_row_leaf_key(session, page, rip, key, 0));
+	if (!__wt_off_page(page, key->data)) {
+		*sizep += key->size;
+	}
+	return (0);
+}
+
+/*
+ * __page_size_verify_row_leaf --
+ * Validate that the stored memory footprint matches the page contents.
+ */
+int __page_size_verify_row_leaf(WT_SESSION *session, WT_PAGE *page)
+{
+	WT_CELL *cell;
+	WT_IKEY *ikey;
+	WT_INSERT *insert;
+	WT_INSERT_HEAD *head;
+	WT_ROW *rip;
+	uint64_t mod_size, size;
+
+	size = mod_size = 0;
+
+	/*
+	 * An internal page has:
+	 * - WT_PAGE structure
+	 * - disk image
+	 * - A page modify structure
+	 */
+	size = sizeof(WT_PAGE);
+
+	size += page->pg_row_entries * sizeof(WT_ROW);
+
+	/* Account for any entries at the start of the page. */
+	if ((head = WT_ROW_INSERT_SMALLEST(page)) != NULL) {
+		WT_SKIP_FOREACH(insert, head) {
+			WT_RET(__page_size_insert(session, page, insert, &size));
+
+	}
+
+	/* Account for all other entries on the page. */
+	WT_ROW_FOREACH(page, rip, i) {
+		WT_RET(__wt_row_leaf_key(session, page, rip, key, 0));
+		if (__wt_off_page(page, key->data)) {
+		}
+
+		if ((upd = WT_ROW_UPDATE(page, rip)) != NULL)
+			__debug_update(ds, upd, 0);
+
+		if ((insert = WT_ROW_INSERT(page, rip)) != NULL)
+			__debug_row_skip(ds, insert);
+	}
+
+	if (page->dsk != NULL && F_ISSET(page, WT_PAGE_DISK_ALLOC))
+		size += page->dsk->mem_size;
+
+	return (0);
+}
+
+/*
+ * __page_modify_size --
+ * Figure out how much memory a page modify structure uses.
+ */
+int __page_modify_size(WT_SESSION *session, WT_PAGE *page, uint64_t sizep)
+{
+	WT_PAGE_MODIFY *mod;
+	uint64_t size;
+
+	*sizep = 0;
+	mod = page->modify;
+
+	if (page->modify == NULL)
+		return (0);
+
+	size = sizeof(WT_PAGE_MODIFY);
+
+	*sizep = size;
+	return (0);
+}
+
+/*
+ * __wt_page_size_verify --
+ * Validate that the stored memory footprint matches the page contents.
+ */
+int __wt_page_size_verify(WT_SESSION *session, WT_PAGE *page)
+{
+	switch (page->type) {
+	case WT_PAGE_ROW_INT:
+		return (__page_size_verify_row_int(session, page));
+	case WT_PAGE_ROW_LEAF:
+		return (__page_size_verify_row_leaf(session, page));
+	default:
+		return (0);
+	}
+	return (0);
+}
+#endif
