@@ -230,6 +230,9 @@ __wt_page_refp(WT_SESSION_IMPL *session,
 	 */
 retry:	pindex = WT_INTL_INDEX_COPY(ref->home);
 
+	__wt_refdbg(0xacceff, 0, ref->ref_hint, S2C(session)->split_gen,
+	    session->split_gen, (uint64_t)pindex->entries, pindex);
+        WT_HAVE_DIAGNOSTIC_YIELD;
 	/*
 	 * Use the page's reference hint: it should be correct unless the page
 	 * split before our slot.  If the page splits after our slot, the hint

@@ -145,6 +145,7 @@ extern int __wt_page_inmem(WT_SESSION_IMPL *session, WT_REF *ref, const void *im
 extern int __wt_cache_read(WT_SESSION_IMPL *session, WT_REF *ref);
 extern int __wt_kv_return(WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_UPDATE *upd);
 extern int __wt_bt_salvage(WT_SESSION_IMPL *session, WT_CKPT *ckptbase, const char *cfg[]);
+extern void __wt_refdbg(uint32_t op, uint32_t which, uint32_t x, uint64_t cg, uint64_t sg, uint64_t og, void *p);
 extern void __wt_split_stash_discard(WT_SESSION_IMPL *session);
 extern void __wt_split_stash_discard_all( WT_SESSION_IMPL *session_safe, WT_SESSION_IMPL *session);
 extern int __wt_multi_to_ref(WT_SESSION_IMPL *session, WT_PAGE *page, WT_MULTI *multi, WT_REF **refp, size_t *incrp);

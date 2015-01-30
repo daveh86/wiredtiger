@@ -262,6 +262,8 @@ __wt_free_ref(
 		__wt_free(session, ref->page_del);
 	}
 
+	__wt_refdbg(0xf1ee01, 1, 0, S2C(session)->split_gen, 
+	    session->split_gen, 0, ref);
 	__wt_overwrite_and_free(session, ref);
 }
 

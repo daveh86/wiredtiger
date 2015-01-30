@@ -21,6 +21,49 @@
 	WT_MEMSIZE_ADD(to_incr, __len);					\
 } while (0)
 
+#define	WTMAXREFDBG	2048
+#define	WTSTASHDBG	0x1000000000000000	/* high 64 bit */
+struct __wtrefdbg {
+	uint32_t	op;
+	struct timespec	t;
+	uint32_t	extra;
+	uint64_t	conn_splitgen;
+	uint64_t	sess_splitgen;
+	uint64_t	old_splitgen;
+	void		*p;
+} __wtrefdbg_free[WTMAXREFDBG], __wtrefdbg_acc[WTMAXREFDBG];
+uint32_t  __wtrefdbgfree_i = 0;
+uint32_t  __wtrefdbgacc_i = 0;
+
+/*
+ * __wt_refdeg --
+ *	Add debug entry.
+ */
+void
+__wt_refdbg(uint32_t op, uint32_t which, uint32_t x, uint64_t cg, uint64_t sg, uint64_t og, void *p)
+{
+	uint32_t i;
+	struct timespec t;
+	struct __wtrefdbg *wtdbg;
+
+	(void)__wt_epoch(NULL, &t);
+
+	if (which == 0) {
+		i = __wtrefdbgacc_i++ % WTMAXREFDBG;
+		wtdbg = &__wtrefdbg_acc[i];
+	} else {
+		i = __wtrefdbgfree_i++ % WTMAXREFDBG;
+		wtdbg = &__wtrefdbg_free[i];
+	}
+	wtdbg->t = t;
+	wtdbg->op = op;
+	wtdbg->extra = x;
+	wtdbg->conn_splitgen = cg;
+	wtdbg->sess_splitgen = sg;
+	wtdbg->old_splitgen = og;
+	wtdbg->p = p;
+}
+
 /*
  * __split_oldest_gen --
  *	Calculate the oldest active split generation.
@@ -75,6 +118,37 @@ __split_stash_add(WT_SESSION_IMPL *session, void *p, size_t len)
 }
 
 /*
+ * __split_stash_add_dbg --
+ *	Add a new entry into the session's split stash list.
+ */
+static int
+__split_stash_add_dbg(WT_SESSION_IMPL *session, void *p, size_t len)
+{
+	WT_SPLIT_STASH *stash;
+
+	WT_ASSERT(session, p != NULL);
+
+	/* Grow the list as necessary. */
+	WT_RET(__wt_realloc_def(session, &session->split_stash_alloc,
+	    session->split_stash_cnt + 1, &session->split_stash));
+
+	stash = session->split_stash + session->split_stash_cnt++;
+	stash->split_gen = WT_ATOMIC_ADD8(S2C(session)->split_gen, 1);
+	FLD_SET(stash->split_gen, WTSTASHDBG);
+	stash->p = p;
+	stash->len = len;
+
+	WT_STAT_FAST_CONN_ATOMIC_INCRV(session, rec_split_stashed_bytes, len);
+	WT_STAT_FAST_CONN_ATOMIC_INCR(session, rec_split_stashed_objects);
+
+	/* See if we can free any previous entries. */
+	if (session->split_stash_cnt > 1)
+		__wt_split_stash_discard(session);
+
+	return (0);
+}
+
+/*
  * __wt_split_stash_discard --
  *	Discard any memory from a session's split stash that we can.
  */
@@ -84,6 +158,8 @@ __wt_split_stash_discard(WT_SESSION_IMPL *session)
 	WT_SPLIT_STASH *stash;
 	uint64_t oldest;
 	size_t i;
+	uint64_t dbg;
+	uint32_t op;
 
 	/* Get the oldest split generation. */
 	oldest = __split_oldest_gen(session);
@@ -93,7 +169,9 @@ __wt_split_stash_discard(WT_SESSION_IMPL *session)
 	    ++i, ++stash) {
 		if (stash->p == NULL)
 			continue;
-		else if (stash->split_gen >= oldest)
+		dbg = FLD_ISSET(stash->split_gen, WTSTASHDBG);
+		FLD_CLR(stash->split_gen, WTSTASHDBG);
+		if (stash->split_gen >= oldest)
 			break;
 		/*
 		 * It's a bad thing if another thread is in this memory after
@@ -103,6 +181,15 @@ __wt_split_stash_discard(WT_SESSION_IMPL *session)
 		    session, rec_split_stashed_bytes, stash->len);
 		WT_STAT_FAST_CONN_ATOMIC_DECR(
 		    session, rec_split_stashed_objects);
+		if (stash->len == sizeof(WT_REF) || dbg) {
+			if (dbg)
+				op = 0xd18cadde;
+			else
+				op = 0xd18cad;
+			__wt_refdbg(op, 1, (uint32_t)stash->len,
+			    S2C(session)->split_gen,
+			    stash->split_gen, oldest, stash->p);
+		}
 		__wt_overwrite_and_free_len(session, stash->p, stash->len);
 	}
 
@@ -156,9 +243,11 @@ __split_safe_free(WT_SESSION_IMPL *session, int exclusive, void *p, size_t s)
 	 * We have swapped something in a page: if we don't have exclusive
 	 * access, check whether there are other threads in the same tree.
 	 */
+#if 0
 	if (!exclusive &&
 	    __split_oldest_gen(session) == S2C(session)->split_gen + 1)
 		exclusive = 1;
+#endif
 
 	if (exclusive) {
 		__wt_free(session, p);
@@ -174,6 +263,50 @@ __split_safe_free(WT_SESSION_IMPL *session, int exclusive, void *p, size_t s)
  */
 static u_int __split_deepen_min_child = 10000;
 static u_int __split_deepen_per_child = 100;
+
+/*
+ * __split_safe_free_dbg --
+ *	Free a buffer if we can be sure no thread is accessing it, or schedule
+ *	it to be freed otherwise.
+ */
+static int
+__split_safe_free_dbg(WT_SESSION_IMPL *session, int exclusive, void *p, size_t s)
+{
+	uint64_t conngen, oldgen;
+	uint32_t extra, op;
+	int exclfree;
+
+	/*
+	 * We have swapped something in a page: if we don't have exclusive
+	 * access, check whether there are other threads in the same tree.
+	 */
+	oldgen = __split_oldest_gen(session);
+	conngen = S2C(session)->split_gen;
+	exclfree = exclusive;
+	extra = (uint32_t)exclusive;
+	op = 0xf1eeafe;
+	if (exclusive >= 2) {
+		exclusive -= 2;
+		exclfree -= 2;
+		/* fee = free, afe = safe, de = index */
+		op = 0xfeeafede;
+		extra = (uint32_t)((WT_PAGE_INDEX *)p)->entries;
+	}
+	if (!exclusive &&
+	    oldgen == conngen + 1)
+		exclfree = 1;
+
+	if (exclfree) {
+		__wt_refdbg(op, 1, extra, conngen, session->split_gen, oldgen, p);
+		__wt_free(session, p);
+		return (0);
+	}
+
+	if (op == 0xf1eeafe)
+		return (__split_stash_add(session, p, s));
+	else
+		return (__split_stash_add_dbg(session, p, s));
+}
 
 /*
  * __split_should_deepen --
@@ -596,7 +729,7 @@ __split_deepen(WT_SESSION_IMPL *session, WT_PAGE *parent, uint32_t children)
 	 * be using the new index.
 	 */
 	size = sizeof(WT_PAGE_INDEX) + pindex->entries * sizeof(WT_REF *);
-	WT_ERR(__split_safe_free(session, 0, pindex, size));
+	WT_ERR(__split_safe_free_dbg(session, 2, pindex, size));
 	WT_MEMSIZE_ADD(parent_decr, size);
 
 #if 0
@@ -1003,7 +1136,7 @@ __split_parent(WT_SESSION_IMPL *session, WT_REF *ref, WT_REF **ref_new,
 	 * Add it to the session discard list, to be freed when it's safe.
 	 */
 	size = sizeof(WT_PAGE_INDEX) + pindex->entries * sizeof(WT_REF *);
-	WT_TRET(__split_safe_free(session, exclusive, pindex, size));
+	WT_TRET(__split_safe_free_dbg(session, 2+exclusive, pindex, size));
 	WT_MEMSIZE_ADD(parent_decr, size);
 
 	/*
@@ -1397,7 +1530,7 @@ __wt_split_insert(WT_SESSION_IMPL *session, WT_REF *ref, int *splitp)
 	 if (ikey != NULL)
 		WT_TRET(__split_safe_free(
 		    session, 0, ikey, sizeof(WT_IKEY) + ikey->size));
-	WT_TRET(__split_safe_free(session, 0, ref, sizeof(WT_REF)));
+	WT_TRET(__split_safe_free_dbg(session, 0, ref, sizeof(WT_REF)));
 
 	/*
 	 * A note on error handling: if we completed the split, return success,
@@ -1536,7 +1669,7 @@ __wt_split_multi(WT_SESSION_IMPL *session, WT_REF *ref, int exclusive)
 	if (ikey != NULL)
 		WT_TRET(__split_safe_free(
 		    session, exclusive, ikey, sizeof(WT_IKEY) + ikey->size));
-	WT_TRET(__split_safe_free(session, exclusive, ref, sizeof(WT_REF)));
+	WT_TRET(__split_safe_free_dbg(session, exclusive, ref, sizeof(WT_REF)));
 
 	/*
 	 * A note on error handling: if we completed the split, return success,
@@ -1560,8 +1693,11 @@ err:	/*
 	 * common code paths, and unwinding those changes will be difficult.
 	 * For now, leak the memory by not discarding the instantiated pages.
 	 */
-	for (i = 0; i < new_entries; ++i)
+	for (i = 0; i < new_entries; ++i) {
+		__wt_refdbg(0xe11f1ee, 1, new_entries, S2C(session)->split_gen,
+		    session->split_gen, (uint64_t)i, ref_new[i]);
 		__wt_free_ref(session, page, ref_new[i], 0);
+	}
 	__wt_free(session, ref_new);
 	return (ret);
 }

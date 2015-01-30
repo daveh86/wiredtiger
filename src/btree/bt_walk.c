@@ -33,6 +33,8 @@ __wt_tree_walk(WT_SESSION_IMPL *session, WT_REF **refp, uint32_t flags)
 	 * window.
 	 */
 	WT_ENTER_PAGE_INDEX(session);
+	__wt_refdbg(0xacce01, 0, 0, S2C(session)->split_gen, session->split_gen,
+	    __prev_split_gen, *refp);
 
 	/*
 	 * !!!
@@ -113,7 +115,12 @@ ascend:	/*
 	}
 
 	/* Figure out the current slot in the WT_REF array. */
+	__wt_refdbg(0xacce02, 0, 0, S2C(session)->split_gen, session->split_gen,
+	    __prev_split_gen, ref);
 	__wt_page_refp(session, ref, &pindex, &slot);
+	__wt_refdbg(0xaccede, 0, (uint32_t)slot,
+	    S2C(session)->split_gen, session->split_gen,
+	    (uint64_t)pindex->entries, pindex);
 
 	if (0) {
 restart:	/*
@@ -136,7 +143,12 @@ restart:	/*
 			}
 			goto descend;
 		}
+		__wt_refdbg(0xacce022, 0, 0, S2C(session)->split_gen,
+		    session->split_gen, __prev_split_gen, ref);
 		__wt_page_refp(session, ref, &pindex, &slot);
+		__wt_refdbg(0xaccede2, 0, (uint32_t)slot,
+		    S2C(session)->split_gen, session->split_gen,
+		    (uint64_t)pindex->entries, pindex);
 		if (descending)
 			goto descend;
 	}
@@ -197,6 +209,9 @@ restart:	/*
 
 		for (descending = 0;;) {
 			ref = pindex->index[slot];
+			__wt_refdbg(0xacce03, 0, (uint32_t)slot,
+			    S2C(session)->split_gen, session->split_gen,
+			    (uint64_t)pindex->entries, ref);
 
 			if (LF_ISSET(WT_READ_CACHE)) {
 				/*
