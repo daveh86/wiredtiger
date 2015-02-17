@@ -215,6 +215,13 @@ struct __wt_connection_stats {
 	WT_STATS log_prealloc_max;
 	WT_STATS log_prealloc_used;
 	WT_STATS log_reads;
+	WT_STATS log_release;
+	WT_STATS log_release_lsn;
+	WT_STATS log_release_lsn_max;
+	WT_STATS log_release_total;
+	WT_STATS log_release_total_max;
+	WT_STATS log_release_write;
+	WT_STATS log_release_write_max;
 	WT_STATS log_scan_records;
 	WT_STATS log_scan_rereads;
 	WT_STATS log_scans;

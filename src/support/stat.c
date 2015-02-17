@@ -447,13 +447,25 @@ __wt_stat_init_connection_stats(WT_CONNECTION_STATS *stats)
 	    "log: log records not compressed";
 	stats->log_compress_small.desc =
 	    "log: log records too small to compress";
+	stats->log_release.desc = "log: log release calls";
 	stats->log_scans.desc = "log: log scan operations";
 	stats->log_scan_rereads.desc =
 	    "log: log scan records requiring two reads";
 	stats->log_sync.desc = "log: log sync operations";
+	stats->log_release_write.desc = "log: log time spent in write (msecs)";
+	stats->log_release_total.desc =
+	    "log: log time spent total in write and write_lsn (msecs)";
+	stats->log_release_lsn.desc =
+	    "log: log time spent waiting for write_lsn (msecs)";
 	stats->log_writes.desc = "log: log write operations";
 	stats->log_slot_consolidated.desc = "log: logging bytes consolidated";
 	stats->log_max_filesize.desc = "log: maximum log file size";
+	stats->log_release_write_max.desc =
+	    "log: maximum log time spent in write (msecs)";
+	stats->log_release_total_max.desc =
+	    "log: maximum log time spent total in write and write_lsn (msecs)";
+	stats->log_release_lsn_max.desc =
+	    "log: maximum log time spent waiting for write_lsn (msecs)";
 	stats->log_prealloc_max.desc =
 	    "log: number of pre-allocated log files to create";
 	stats->log_prealloc_files.desc =
@@ -613,6 +625,7 @@ __wt_stat_refresh_connection_stats(void *stats_arg)
 	stats->log_compress_writes.v = 0;
 	stats->log_compress_write_fails.v = 0;
 	stats->log_compress_small.v = 0;
+	stats->log_release.v = 0;
 	stats->log_scans.v = 0;
 	stats->log_scan_rereads.v = 0;
 	stats->log_sync.v = 0;

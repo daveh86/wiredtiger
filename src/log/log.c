@@ -894,12 +894,39 @@ err:
 }
 
 /*
+ * __log_release_stats --
+ *	Generate statistics for log_release timings.
+ */
+static void
+__log_release_stats(WT_SESSION_IMPL *session, struct timespec *start,
+    struct timespec *stop, struct timespec *writets)
+{
+	uint64_t total_msec, wait_msec, write_msec;
+
+	total_msec = WT_TIMEDIFF(*stop, *start) / WT_MILLION;
+	wait_msec = WT_TIMEDIFF(*stop, *writets) / WT_MILLION;
+	write_msec = WT_TIMEDIFF(*writets, *start) / WT_MILLION;
+
+	WT_STAT_FAST_CONN_INCRV(session, log_release_lsn, wait_msec);
+	WT_STAT_FAST_CONN_INCRV(session, log_release_total, total_msec);
+	WT_STAT_FAST_CONN_INCRV(session, log_release_write, write_msec);
+	if (wait_msec > WT_CONN_STAT(session, log_release_lsn_max))
+		WT_STAT_FAST_CONN_SET(session, log_release_lsn_max, wait_msec);
+	if (total_msec > WT_CONN_STAT(session, log_release_total_max))
+		WT_STAT_FAST_CONN_SET(session,
+		    log_release_total_max, total_msec);
+	if (write_msec > WT_CONN_STAT(session, log_release_write_max))
+		WT_STAT_FAST_CONN_SET(session,
+		    log_release_write_max, write_msec);
+}
+/*
  * __log_release --
  *	Release a log slot.
  */
 static int
 __log_release(WT_SESSION_IMPL *session, WT_LOGSLOT *slot)
 {
+	struct timespec start, stop, writets;
 	WT_CONNECTION_IMPL *conn;
 	WT_DECL_RET;
 	WT_LOG *log;
@@ -913,12 +940,15 @@ __log_release(WT_SESSION_IMPL *session, WT_LOGSLOT *slot)
 	locked = yield_count = 0;
 
 	/* Write the buffered records */
+	WT_STAT_FAST_CONN_INCR(session, log_release);
+	WT_ERR(__wt_epoch(session, &start));
 	if (F_ISSET(slot, SLOT_BUFFERED)) {
 		write_size = (size_t)
 		    (slot->slot_end_lsn.offset - slot->slot_start_offset);
 		WT_ERR(__wt_write(session, slot->slot_fh,
 		    slot->slot_start_offset, write_size, slot->slot_buf.mem));
 	}
+	WT_ERR(__wt_epoch(session, &writets));
 
 	/*
 	 * Wait for earlier groups to finish, otherwise there could be holes
@@ -932,10 +962,13 @@ __log_release(WT_SESSION_IMPL *session, WT_LOGSLOT *slot)
 			    session, log->log_write_cond, 200));
 	}
 	log->write_lsn = slot->slot_end_lsn;
+	WT_ERR(__wt_epoch(session, &stop));
 	WT_ERR(__wt_cond_signal(session, log->log_write_cond));
 
 	if (F_ISSET(slot, SLOT_CLOSEFH))
 		WT_ERR(__wt_cond_signal(session, conn->log_close_cond));
+
+	__log_release_stats(session, &start, &stop, &writets);
 
 	/*
 	 * Try to consolidate calls to fsync to wait less.  Acquire a spin lock
